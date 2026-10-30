@@ -1,4 +1,5 @@
-# 네이버 지식인 "분양, 청약" 분야(dirId 40203) 새 질문을 카카오톡 "나와의 채팅"으로 알려 주는 프로그램.
+# 네이버 지식인 "분양, 청약" 분야(dirId 40203) 새 질문을 휴대폰 ntfy 앱(알림 소리)과 카카오톡 "나와의 채팅"(기록)으로 알려 주는 프로그램.
+# 카카오는 "나에게 보내기"에 알림을 울리지 않아서 ntfy를 함께 쓴다(2026-10-30). ntfy 주제 이름은 state/ntfy.enc에 암호화.
 # GitHub Actions가 10분마다 실행한다(.github/workflows/alert.yml).
 #
 # 필요한 금고(Secrets): KAKAO_REST_KEY (카카오 앱의 REST API 키), KAKAO_CLIENT_SECRET(쓰는 앱만)
@@ -8,6 +9,8 @@
 # 사용:
 #   python kin_alert.py connect <인가코드>   카톡 처음 연결(kakao-connect.yml)
 #   python kin_alert.py                      새 질문 확인·알림(alert.yml)
+#   python kin_alert.py test                 ntfy 시험 알림(alert.yml을 test로 수동 실행)
+#   python kin_alert.py fail                 실행 실패를 ntfy로 알림(alert.yml 실패 때)
 import base64, hashlib, html, json, os, re, sys, urllib.parse, urllib.request
 from cryptography.fernet import Fernet
 
@@ -16,6 +19,7 @@ LIST_URL = f'https://kin.naver.com/qna/list.naver?dirId={DIR_ID}'
 REDIRECT_URI = 'https://yongbro95.com'
 STATE = 'state/seen.json'
 TOKEN = 'state/token.enc'
+NTFY = 'state/ntfy.enc'
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/130.0 Safari/537.36')
 
@@ -53,6 +57,17 @@ def send(access, text, link):
          {'Authorization': f'Bearer {access}'})
 
 
+def ntfy(title, message, link, priority=4):
+    topic = fernet.decrypt(open(NTFY, 'rb').read()).decode()
+    body = json.dumps({'topic': topic, 'title': title, 'message': message, 'click': link,
+                       'priority': priority, 'tags': ['house']}).encode()
+    req = urllib.request.Request('https://ntfy.sh/', body, {'Content-Type': 'application/json'})
+    try:
+        urllib.request.urlopen(req, timeout=20).read()
+    except Exception as e:
+        print(f'ntfy 실패: {e}')
+
+
 def fetch_questions():
     req = urllib.request.Request(LIST_URL, headers={'User-Agent': UA, 'Accept-Language': 'ko-KR'})
     with urllib.request.urlopen(req, timeout=20) as r:
@@ -69,6 +84,15 @@ def fetch_questions():
 
 
 def main():
+    if sys.argv[1:] == ['test']:
+        ntfy('지식인 알림 시험', '이 알림이 보이면 연결 성공이에요.', LIST_URL)
+        return
+
+    if sys.argv[1:] == ['fail']:
+        ntfy('지식인 알림이 멈췄어요', '실행 중 오류가 났어요. Claude에게 알려 주세요.',
+             'https://github.com/hooni0225-byte/kin-alert/actions', 5)
+        return
+
     if len(sys.argv) == 3 and sys.argv[1] == 'connect':
         tok = kakao_token({'grant_type': 'authorization_code', 'redirect_uri': REDIRECT_URI, 'code': sys.argv[2]})
         save_refresh(tok['refresh_token'])
@@ -91,9 +115,11 @@ def main():
     new = [d for d in questions if d not in seen]
     if not seen:
         send(access, f'지식인 알림을 시작했어요. 지금 목록의 질문 {len(questions)}개는 건너뛰고 새 질문부터 알려 드릴게요.', LIST_URL)
+        ntfy('지식인 알림 시작', '이 알림이 보이면 연결 성공이에요. 새 질문부터 알려 드릴게요.', LIST_URL)
     else:
         for d in sorted(new, key=int):
             link = f'https://kin.naver.com/qna/detail.naver?dirId={DIR_ID}&docId={d}'
+            ntfy('지식인 새 질문', questions[d], link)
             send(access, f'[지식인 새 질문]\n{questions[d]}', link)
     print(f'새 질문 {len(new)}개')
     json.dump((seen + sorted(new, key=int))[-500:], open(STATE, 'w'))

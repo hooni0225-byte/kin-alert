@@ -3,23 +3,35 @@ on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
+    inputs:
+      test:
+        description: 'ntfy 시험 알림만 보내기'
+        type: boolean
+        default: false
 permissions:
   contents: write
 concurrency: kin-alert
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
+      KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - run: pip install -q cryptography
-      - run: python kin_alert.py
-        env:
-          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
-          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+      - if: ${{ inputs.test }}
+        run: python kin_alert.py test
+      - if: ${{ !inputs.test }}
+        run: python kin_alert.py && rm -f state/failing
+      # 멈추면 휴대폰으로 한 번만 알림(다시 성공하면 state/failing 지워짐)
+      - name: 실패 알림
+        if: failure()
+        run: '[ -f state/failing ] || (python kin_alert.py fail && touch state/failing)'
       - name: 상태 저장
         if: always()
         run: |
           git config user.name kin-alert-bot
           git config user.email kin-alert-bot@users.noreply.github.com
-          git add state
+          git add -A state
           git diff --cached --quiet || (git commit -qm "상태 갱신" && git push -q)
