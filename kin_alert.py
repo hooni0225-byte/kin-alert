@@ -116,6 +116,11 @@ def main():
     if not seen:
         send(access, f'지식인 알림을 시작했어요. 지금 목록의 질문 {len(questions)}개는 건너뛰고 새 질문부터 알려 드릴게요.', LIST_URL)
         ntfy('지식인 알림 시작', '이 알림이 보이면 연결 성공이에요. 새 질문부터 알려 드릴게요.', LIST_URL)
+    elif len(new) > 3:
+        # 실행이 늦어져 여러 개가 쌓였으면 알림 하나로 묶음(2026-10-30 용훈님: 8개가 한꺼번에 울림)
+        titles = '\n'.join('- ' + questions[d] for d in sorted(new, key=int, reverse=True))
+        ntfy(f'지식인 새 질문 {len(new)}개', titles, LIST_URL)
+        send(access, f'[지식인 새 질문 {len(new)}개]\n{titles}', LIST_URL)
     else:
         for d in sorted(new, key=int):
             link = f'https://kin.naver.com/qna/detail.naver?dirId={DIR_ID}&docId={d}'
