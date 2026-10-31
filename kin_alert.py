@@ -10,8 +10,9 @@
 #   python kin_alert.py connect <인가코드>   카톡 처음 연결(kakao-connect.yml)
 #   python kin_alert.py                      새 질문 확인·알림(alert.yml)
 #   python kin_alert.py test                 ntfy 시험 알림(alert.yml을 test로 수동 실행)
+#   python kin_alert.py answered             용훈님이 답한 질문 바로 확인(state/answered.json)
 #   python kin_alert.py fail                 실행 실패를 ntfy로 알림(alert.yml 실패 때)
-import base64, hashlib, html, json, os, re, sys, urllib.parse, urllib.request
+import base64, hashlib, html, json, os, re, sys, time, urllib.parse, urllib.request
 from cryptography.fernet import Fernet
 
 DIR_ID = '40203'
@@ -20,6 +21,10 @@ REDIRECT_URI = 'https://yongbro95.com'
 STATE = 'state/seen.json'
 TOKEN = 'state/token.enc'
 NTFY = 'state/ntfy.enc'
+# 용훈님이 이미 답한 질문 목록. 아침 지식인 루틴이 raw.githubusercontent.com으로 읽음(2026-10-31, 검색 API는 새 답변 반영이 늦음)
+ANSWERED = 'state/answered.json'
+ANSWERED_AT = 'state/answered_at.txt'
+NICK = '청약현장노트'
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/130.0 Safari/537.36')
 
@@ -68,10 +73,38 @@ def ntfy(title, message, link, priority=4):
         print(f'ntfy 실패: {e}')
 
 
-def fetch_questions():
-    req = urllib.request.Request(LIST_URL, headers={'User-Agent': UA, 'Accept-Language': 'ko-KR'})
+def get(url):
+    req = urllib.request.Request(url, headers={'User-Agent': UA, 'Accept-Language': 'ko-KR'})
     with urllib.request.urlopen(req, timeout=20) as r:
-        page = r.read().decode('utf-8', 'replace')
+        return r.read().decode('utf-8', 'replace')
+
+
+def check_answered(seen, force=False):
+    # 최근 질문 상세 화면에 용훈님 별명이 있으면 기록. 네이버 부담을 줄이려고 3시간에 한 번만.
+    last = float(open(ANSWERED_AT).read()) if os.path.exists(ANSWERED_AT) else 0
+    if not force and time.time() - last < 3 * 3600:
+        return
+    answered = json.load(open(ANSWERED)) if os.path.exists(ANSWERED) else []
+    ok = 0
+    for d in seen[-100:]:
+        if d in answered:
+            continue
+        try:
+            page = get(f'https://kin.naver.com/qna/detail.naver?dirId={DIR_ID}&docId={d}')
+            ok += 1
+        except Exception as e:
+            print(f'상세 화면 실패 {d}: {e}')
+            continue
+        if NICK in page:
+            answered.append(d)
+        time.sleep(0.5)
+    print(f'답변 확인: 상세 화면 {ok}개 읽음, 용훈님 답변 {len(answered)}개')
+    json.dump(answered[-500:], open(ANSWERED, 'w'))
+    open(ANSWERED_AT, 'w').write(str(time.time()))
+
+
+def fetch_questions():
+    page = get(LIST_URL)
     found = {}
     for m in re.finditer(r'<a[^>]+href="([^"]*detail\.naver\?[^"]*docId=(\d+)[^"]*)"[^>]*>(.*?)</a>', page, re.S):
         title = html.unescape(re.sub(r'<.*?>', '', m.group(3))).strip()
@@ -86,6 +119,10 @@ def fetch_questions():
 def main():
     if sys.argv[1:] == ['test']:
         ntfy('지식인 알림 시험', '이 알림이 보이면 연결 성공이에요.', LIST_URL)
+        return
+
+    if sys.argv[1:] == ['answered']:
+        check_answered(json.load(open(STATE)), force=True)
         return
 
     if sys.argv[1:] == ['fail']:
@@ -127,7 +164,9 @@ def main():
             ntfy('지식인 새 질문', questions[d], link)
             send(access, f'[지식인 새 질문]\n{questions[d]}', link)
     print(f'새 질문 {len(new)}개')
-    json.dump((seen + sorted(new, key=int))[-500:], open(STATE, 'w'))
+    seen = (seen + sorted(new, key=int))[-500:]
+    json.dump(seen, open(STATE, 'w'))
+    check_answered(seen)
 
 
 if __name__ == '__main__':

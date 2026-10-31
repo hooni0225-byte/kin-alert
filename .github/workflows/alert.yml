@@ -8,6 +8,10 @@ on:
         description: 'ntfy 시험 알림만 보내기'
         type: boolean
         default: false
+      answered:
+        description: '용훈님 답변 확인만 바로 하기'
+        type: boolean
+        default: false
 permissions:
   contents: write
 concurrency: kin-alert
@@ -22,7 +26,9 @@ jobs:
       - run: pip install -q cryptography
       - if: ${{ inputs.test }}
         run: python kin_alert.py test
-      - if: ${{ !inputs.test }}
+      - if: ${{ inputs.answered }}
+        run: python kin_alert.py answered
+      - if: ${{ !inputs.test && !inputs.answered }}
         run: python kin_alert.py && rm -f state/failing
       # 멈추면 휴대폰으로 한 번만 알림(다시 성공하면 state/failing 지워짐)
       - name: 실패 알림
